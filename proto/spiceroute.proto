@@ -1,0 +1,99 @@
+syntax = "proto3";
+package spiceroute.v1;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/you/spiceroute/proto;proto";
+
+message Preference {
+  string user_id = 1;
+  repeated string cuisines = 2;
+  repeated string allergies = 3;
+  double budget_week = 4;
+  bool spicy = 5;
+}
+
+message Mood {
+  string user_id = 1;
+  repeated string cuisines_this_week = 2;
+}
+
+message Dish {
+  string id = 1;
+  string name = 2;
+  string cuisine = 3;
+  int32 prep_minutes = 4;
+  int32 calories = 5;
+  repeated string ingredients = 6;
+  double cost = 7;
+  int32 shelf_life_days = 8;
+}
+
+message PlanRequest {
+  string user_id = 1;
+  int32 days = 2;
+  repeated Dish dishes = 3;
+  double daily_calories = 4;
+  double budget_week = 5;
+}
+
+message DailyMeals {
+  int32 day_index = 1;
+  repeated string dish_ids = 2;
+  repeated int32 servings = 3;
+}
+
+message PlanResponse {
+  repeated DailyMeals schedule = 1;
+  repeated string cook_days = 2;
+  repeated string shopping_list = 3;
+}
+
+message Recipe {
+  string id = 1;
+  string name = 2;
+  string cuisine = 3;
+  int32 prep_minutes = 4;
+  int32 calories = 5;
+  repeated string ingredients = 6;
+  double cost = 7;
+  int32 shelf_life_days = 8;
+  repeated string tags = 9;
+  string nutrition = 10;
+}
+
+message RecipeID { string id = 1; }
+message RecipeQuery { repeated string cuisines = 1; bool spicy = 2; }
+message RecipeList { repeated Recipe recipes = 1; }
+
+message Feedback {
+  string user_id = 1;
+  string dish_id = 2;
+  int32 rating = 3;
+  bool skipped = 4;
+  string substituted_with = 5;
+  string comment = 6;
+  string cooked_at = 7;
+}
+
+message FeedbackBatch {
+  repeated Feedback entries = 1;
+}
+
+service ProfileService {
+  rpc UpsertPreference(Preference) returns (Preference);
+  rpc GetPreference(Preference) returns (Preference);
+}
+
+service PlannerService {
+  rpc GeneratePlan(PlanRequest) returns (PlanResponse);
+}
+
+service RecipeService {
+  rpc CreateRecipe(Recipe) returns (RecipeID);
+  rpc ListRecipes(RecipeQuery) returns (RecipeList);
+}
+
+service FeedbackService {
+  rpc SubmitFeedback(FeedbackBatch) returns (google.protobuf.Empty);
+}

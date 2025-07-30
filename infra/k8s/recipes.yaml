@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recipes
+  namespace: spiceroute
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: recipes
+  template:
+    metadata:
+      labels:
+        app: recipes
+    spec:
+      containers:
+        - name: recipes
+          image: us-central1-docker.pkg.dev/YOUR_PROJECT/spiceroute/recipes:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: spiceroute-secret
+                  key: DB_DSN
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: recipes
+  namespace: spiceroute
+spec:
+  selector:
+    app: recipes
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080

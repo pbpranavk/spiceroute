@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orderer
+  namespace: spiceroute
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: orderer
+  template:
+    metadata:
+      labels:
+        app: orderer
+    spec:
+      containers:
+        - name: orderer
+          image: us-central1-docker.pkg.dev/YOUR_PROJECT/spiceroute/orderer:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: spiceroute-secret
+                  key: DB_DSN
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orderer
+  namespace: spiceroute
+spec:
+  selector:
+    app: orderer
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
