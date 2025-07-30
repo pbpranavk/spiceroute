@@ -2,67 +2,103 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"net"
-	"os"
 
+	"spiceroute/pkg/database"
+	"spiceroute/pkg/models"
 	pb "spiceroute/proto"
 
-	"github.com/google/uuid"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"google.golang.org/grpc"
+	"gorm.io/gorm"
 )
 
-func pqStringArray(slice []string) interface{} {
-	return slice
-}
-
 type server struct {
-	db *sql.DB
+	db *gorm.DB
 	pb.UnimplementedRecipeServiceServer
 }
 
 func (s *server) CreateRecipe(ctx context.Context, r *pb.Recipe) (*pb.RecipeID, error) {
-	id := uuid.New()
-	_, err := s.db.ExecContext(ctx, `
-	  INSERT INTO recipes (id, name, cuisine, prep_minutes, calories, ingredients, cost, shelf_life_days, tags, nutrition)
-	  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		id, r.Name, r.Cuisine, r.PrepMinutes, r.Calories, pqStringArray(r.Ingredients),
-		r.Cost, r.ShelfLifeDays, pqStringArray(r.Tags), r.Nutrition)
-	return &pb.RecipeID{Id: id.String()}, err
+	recipe := models.Recipe{
+		Name:          r.Name,
+		Cuisine:       r.Cuisine,
+		PrepMinutes:   r.PrepMinutes,
+		Calories:      r.Calories,
+		Ingredients:   r.Ingredients,
+		Cost:          r.Cost,
+		ShelfLifeDays: r.ShelfLifeDays,
+		Tags:          r.Tags,
+		Nutrition:     r.Nutrition,
+	}
+
+	result := s.db.WithContext(ctx).Create(&recipe)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	return &pb.RecipeID{Id: recipe.ID}, nil
 }
 
 func (s *server) ListRecipes(ctx context.Context, q *pb.RecipeQuery) (*pb.RecipeList, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, cuisine, prep_minutes, calories, ingredients, cost, shelf_life_days, tags, nutrition FROM recipes LIMIT 100`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+	var recipes []models.Recipe
 
-	var recipes []*pb.Recipe
-	for rows.Next() {
-		var r pb.Recipe
-		var ingredients, tags []string
-		err := rows.Scan(&r.Id, &r.Name, &r.Cuisine, &r.PrepMinutes, &r.Calories, &ingredients, &r.Cost, &r.ShelfLifeDays, &tags, &r.Nutrition)
-		if err != nil {
-			return nil, err
-		}
-		r.Ingredients = ingredients
-		r.Tags = tags
-		recipes = append(recipes, &r)
+	query := s.db.WithContext(ctx).Model(&models.Recipe{})
+
+	// Apply filters if provided
+	if len(q.Cuisines) > 0 {
+		query = query.Where("cuisine IN ?", q.Cuisines)
 	}
-	return &pb.RecipeList{Recipes: recipes}, nil
+
+	// Note: Spicy filter would need to be implemented based on recipe tags or a separate field
+	// For now, we'll just limit the results
+	query = query.Limit(100)
+
+	result := query.Find(&recipes)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	// Convert to protobuf
+	var pbRecipes []*pb.Recipe
+	for _, recipe := range recipes {
+		pbRecipes = append(pbRecipes, &pb.Recipe{
+			Id:            recipe.ID,
+			Name:          recipe.Name,
+			Cuisine:       recipe.Cuisine,
+			PrepMinutes:   recipe.PrepMinutes,
+			Calories:      recipe.Calories,
+			Ingredients:   recipe.Ingredients,
+			Cost:          recipe.Cost,
+			ShelfLifeDays: recipe.ShelfLifeDays,
+			Tags:          recipe.Tags,
+			Nutrition:     recipe.Nutrition,
+		})
+	}
+
+	return &pb.RecipeList{Recipes: pbRecipes}, nil
 }
 
 func main() {
-	db, err := sql.Open("pgx", os.Getenv("DB_DSN"))
+	// Initialize database connection
+	db, err := database.NewConnection()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to connect to database:", err)
 	}
 
-	lis, _ := net.Listen("tcp", ":50053")
+	// Run migrations
+	if err := database.AutoMigrate(db); err != nil {
+		log.Fatal("Failed to run migrations:", err)
+	}
+
+	// Start gRPC server
+	lis, err := net.Listen("tcp", ":50053")
+	if err != nil {
+		log.Fatal("Failed to listen:", err)
+	}
+
 	grpcServer := grpc.NewServer()
 	pb.RegisterRecipeServiceServer(grpcServer, &server{db: db})
+
+	log.Println("Recipe service starting on :50053")
 	log.Fatal(grpcServer.Serve(lis))
 }

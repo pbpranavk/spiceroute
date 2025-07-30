@@ -2,43 +2,92 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"log"
 	"net"
-	"os"
 
+	"spiceroute/pkg/database"
+	"spiceroute/pkg/models"
 	pb "spiceroute/proto"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"google.golang.org/grpc"
+	"gorm.io/gorm"
 )
-
-func pqStringArray(slice []string) interface{} {
-	return slice
-}
 
 type server struct {
 	pb.UnimplementedProfileServiceServer
-	db *sql.DB
+	db *gorm.DB
 }
 
 func (s *server) UpsertPreference(ctx context.Context, p *pb.Preference) (*pb.Preference, error) {
-	_, err := s.db.ExecContext(ctx, `
-	  INSERT INTO preferences (user_id, cuisines, allergies, budget_week, spicy)
-	  VALUES ($1, $2, $3, $4, $5)
-	  ON CONFLICT (user_id) DO UPDATE SET cuisines=$2, allergies=$3, budget_week=$4, spicy=$5`,
-		p.UserId, pqStringArray(p.Cuisines), pqStringArray(p.Allergies), p.BudgetWeek, p.Spicy)
-	return p, err
+	preference := models.Preference{
+		UserID:     p.UserId,
+		Cuisines:   p.Cuisines,
+		Allergies:  p.Allergies,
+		BudgetWeek: p.BudgetWeek,
+		Spicy:      p.Spicy,
+	}
+
+	// Use Upsert (Create or Update)
+	result := s.db.WithContext(ctx).Where("user_id = ?", p.UserId).
+		Assign(preference).
+		FirstOrCreate(&preference)
+
+	if result.Error != nil {
+		return nil, result.Error
+	}
+
+	// Convert back to protobuf
+	return &pb.Preference{
+		UserId:     preference.UserID,
+		Cuisines:   preference.Cuisines,
+		Allergies:  preference.Allergies,
+		BudgetWeek: preference.BudgetWeek,
+		Spicy:      preference.Spicy,
+	}, nil
+}
+
+func (s *server) GetPreference(ctx context.Context, p *pb.Preference) (*pb.Preference, error) {
+	var preference models.Preference
+
+	result := s.db.WithContext(ctx).Where("user_id = ?", p.UserId).First(&preference)
+	if result.Error != nil {
+		if result.Error == gorm.ErrRecordNotFound {
+			return nil, nil // Return nil if not found
+		}
+		return nil, result.Error
+	}
+
+	// Convert to protobuf
+	return &pb.Preference{
+		UserId:     preference.UserID,
+		Cuisines:   preference.Cuisines,
+		Allergies:  preference.Allergies,
+		BudgetWeek: preference.BudgetWeek,
+		Spicy:      preference.Spicy,
+	}, nil
 }
 
 func main() {
-	db, err := sql.Open("pgx", os.Getenv("DB_DSN"))
+	// Initialize database connection
+	db, err := database.NewConnection()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to connect to database:", err)
 	}
 
-	lis, _ := net.Listen("tcp", ":50051")
+	// Run migrations
+	if err := database.AutoMigrate(db); err != nil {
+		log.Fatal("Failed to run migrations:", err)
+	}
+
+	// Start gRPC server
+	lis, err := net.Listen("tcp", ":50051")
+	if err != nil {
+		log.Fatal("Failed to listen:", err)
+	}
+
 	grpcServer := grpc.NewServer()
 	pb.RegisterProfileServiceServer(grpcServer, &server{db: db})
+
+	log.Println("Profile service starting on :50051")
 	log.Fatal(grpcServer.Serve(lis))
 }
